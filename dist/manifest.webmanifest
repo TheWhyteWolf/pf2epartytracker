@@ -1,0 +1,14 @@
+{
+  "name": "PF2e Party Tracker",
+  "short_name": "Party Tracker",
+  "description": "A GM's Pathfinder 2e party tracker — passive stats, secret checks, exploration activities, offline.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#14161b",
+  "theme_color": "#14161b",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#14161b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Party Tracker">
+<meta name="description" content="A GM's Pathfinder 2e party tracker — passive stats, secret checks, and exploration activities.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236c7a89' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><path d='M12 2.6 4.5 5.3v6.2c0 4.6 3.1 7.9 7.5 9.9 4.4-2 7.5-5.3 7.5-9.9V5.3z'/><circle cx='12' cy='9.3' r='1.7'/><path d='M8.7 15.4a3.4 3.4 0 0 1 6.6 0'/></svg>">
+<!-- Set the light/dark theme before first paint (avoids a flash); the engine reconciles fully on load. -->
+<script>
+(function(){try{
+  var lib=JSON.parse(localStorage.getItem("pf2ePartyTracker.v1"))||{};
+  var s=lib.settings||{}, mode=s.themeMode||"auto";
+  if(mode!=="light"&&mode!=="dark") mode=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";
+  var root=document.documentElement; root.dataset.theme=mode;
+  var c=s.custom;
+  if(c){ if(c.accent)root.style.setProperty("--accent",c.accent); if(c.bg)root.style.setProperty("--bg",c.bg);
+    if(c.ink)root.style.setProperty("--ink",c.ink); if(c.surface)root.style.setProperty("--surface",c.surface); }
+}catch(e){}})();
+</script>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>PF2e Party Tracker</title>
+<style>
+/*__INJECT_STYLES__*/
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="tophead">
+    <h1><span class="apptitle-ic" id="titleIcon"></span> Party Tracker</h1>
+    <button class="menubtn" onclick="openMenu()" title="Characters &amp; backup" aria-label="Menu"><svg class="icn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.4"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/></svg></button>
+  </div>
+  <div class="sub" id="partySub">Pathfinder 2e (Remaster)</div>
+</header>
+
+<nav class="tabs">
+  <button id="nav-roster" class="on" onclick="go('roster')"><span class="ic"></span>Roster</button>
+  <button id="nav-roll" onclick="go('roll')"><span class="ic"></span>Roll</button>
+  <button id="nav-explore" onclick="go('explore')"><span class="ic"></span>Explore</button>
+  <button id="nav-reference" onclick="go('reference')"><span class="ic"></span>Reference</button>
+</nav>
+
+<main class="wrap">
+  <section id="view-roster"></section>
+  <section id="view-roll" class="hide"></section>
+  <section id="view-explore" class="hide"></section>
+  <section id="view-reference" class="hide"></section>
+
+  <!-- ================= MENU ================= -->
+  <section id="view-menu" class="hide">
+    <h2>Import from Pathbuilder</h2>
+    <p class="meta">In Pathbuilder 2e: <b>Menu → Export → Export JSON</b>. You'll get an id number and a JSON export.</p>
+    <div class="importbox">
+      <label class="field"><span class="name">By export id</span>
+        <div class="row tight">
+          <input type="text" id="importCode" inputmode="numeric" placeholder="e.g. 102154">
+          <button class="btn sm" onclick="importFromCode()">Fetch</button>
+        </div>
+      </label>
+      <label class="field"><span class="name">…or paste JSON <span class="hint">always works, offline</span></span>
+        <textarea id="importJSON" rows="4" placeholder='Paste the exported JSON here, then tap Import'></textarea>
+      </label>
+      <button class="btn" onclick="importFromJSON()">Import from JSON</button>
+      <div class="importstatus" id="importStatus"></div>
+    </div>
+
+    <h2 style="margin-top:26px">Characters</h2>
+    <div id="menuList"></div>
+
+    <h2 style="margin-top:26px">Back up &amp; share</h2>
+    <p class="meta">Everything is stored <b>on this device only</b>. Export the whole party (or a single character from its detail panel) to a code you can save or send to another GM.</p>
+    <div class="row tight">
+      <button class="btn secondary" onclick="exportParty()">Export party</button>
+      <button class="btn secondary" onclick="importBackup()">Import code</button>
+    </div>
+    <textarea id="backupIO" rows="3" placeholder="A code appears here on export — or paste one here, then tap Import."></textarea>
+
+    <h2 style="margin-top:26px">Use offline</h2>
+    <div class="row tight">
+      <button class="btn secondary" onclick="downloadOffline()">Save offline copy</button>
+      <button class="btn secondary" id="installBtn" style="display:none" onclick="installApp()">Install app</button>
+    </div>
+
+    <h2 style="margin-top:26px">Appearance</h2>
+    <div id="appearancePanel"></div>
+
+    <button class="btn secondary" style="margin-top:22px" onclick="closeMenu()">← Back to roster</button>
+    <p class="meta credit">Condition &amp; action text: Paizo (OGL/ORC) via the Foundry VTT pf2e project · unofficial fan tool<br><span id="dataStamp"></span></p>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/*__INJECT_REFERENCE__*/
+</script>
+<script>
+/*__INJECT_CONFIG__*/
+</script>
+<script>
+/*__INJECT_ENGINE__*/
+</script>
+<script>
+(function(){
+  // fill in nav + title icons from the registry once config+engine are live
+  try{
+    document.getElementById("titleIcon").innerHTML = iconSvg("shield");
+    [["roster","roster"],["roll","roll"],["explore","explore"],["reference","reference"]].forEach(function(p){
+      var b=document.querySelector("#nav-"+p[0]+" .ic"); if(b) b.innerHTML=iconSvg(p[1]);
+    });
+  }catch(e){}
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# Keep the npm package lean: ship the built app + sources, not local scratch.
+tools/fixtures/
+pf2e-data/
+.github/
+.claude/
+*.log

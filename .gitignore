@@ -1,0 +1,14 @@
+node_modules/
+*.log
+.DS_Store
+__pycache__/
+*.pyc
+
+# editor / local settings
+.claude/
+
+# local reference clone used by tools/build_reference.py (not part of the project)
+/pf2e-data/
+
+# local scratch: a third-party Pathbuilder export used only as a dev reference
+tools/fixtures/
