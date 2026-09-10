@@ -3,6 +3,12 @@
    cache-first for static assets. Cache version is stamped at build time so a
    redeploy refreshes clients automatically. */
 const CACHE = "pf2e-party-tracker-__CACHE_VERSION__";
+/* Every cache this app has ever made starts with PREFIX. The sweep below is
+   scoped to it on purpose: the three PF2e tools share an origin when they are
+   served from one host (GitHub Pages does it, and so does the toolbox), and an
+   unscoped sweep would delete the other two apps' offline caches every time
+   this one activated. */
+const PREFIX = "pf2e-party-tracker-";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg"];
 
 self.addEventListener("install", (e) => {
@@ -16,7 +22,8 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith(PREFIX) && k !== CACHE)
+        .map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
