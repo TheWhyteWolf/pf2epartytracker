@@ -2,7 +2,7 @@
    Network-first for the app page (fresh when online, cached when offline),
    cache-first for static assets. Cache version is stamped at build time so a
    redeploy refreshes clients automatically. */
-const CACHE = "pf2e-party-tracker-20260910151301";
+const CACHE = "pf2e-party-tracker-20260914005107";
 /* Every cache this app has ever made starts with PREFIX. The sweep below is
    scoped to it on purpose: the three PF2e tools share an origin when they are
    served from one host (GitHub Pages does it, and so does the toolbox), and an
