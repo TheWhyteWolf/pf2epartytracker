@@ -8,8 +8,8 @@ another GM. Run from the project root:
 
     python3 tools/build.py
 """
+import hashlib
 import os
-import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -41,7 +41,11 @@ def main():
 
     # Static PWA files (for the hosted GitHub Pages version). Harmlessly absent
     # when index.html is opened as a downloaded standalone file.
-    cache_ver = time.strftime("%Y%m%d%H%M%S")
+    #
+    # The cache version is a hash of the page itself, not a timestamp: it changes
+    # exactly when the app changes, so a rebuild is reproducible and doesn't dirty
+    # the working tree (dist/ is committed and shipped in the npm package).
+    cache_ver = hashlib.sha256(html.encode("utf-8")).hexdigest()[:12]
     for name in ("icon.svg", "manifest.webmanifest", "sw.js"):
         src = os.path.join(ROOT, "src", name)
         if not os.path.exists(src):

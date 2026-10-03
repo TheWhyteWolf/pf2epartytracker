@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: Build self-contained HTML
+        run: python3 tools/build.py
+      - name: Tests
+        run: node tools/test.mjs
+      - name: dist/ is in sync with src/
+        # dist/ is committed and shipped in the npm package, so a rebuild must
+        # produce no diff. The cache version is a content hash, so this is stable.
+        run: |
+          if ! git diff --exit-code -- dist/; then
+            echo "::error::dist/ is stale — run 'python3 tools/build.py' and commit the result."
+            exit 1
+          fi

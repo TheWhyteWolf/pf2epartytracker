@@ -34,20 +34,100 @@ function loadLibrary() {
   } catch (e) { /* fall through */ }
   return normalizeLib({ characters: {}, order: [], activeId: null });
 }
+/* Back-fill every field the renderers assume. A stored character can come from
+   an older version, a hand-edited localStorage, or a party code pasted from
+   another GM — anything missing or of the wrong type is replaced so a partial
+   record can never break a render. */
+function normalizeCharacter(c) {
+  c = (c && typeof c === "object") ? c : {};
+  const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
+  const arr = (v) => (Array.isArray(v) ? v : []);
+
+  c.name = String(c.name == null || c.name === "" ? "Unnamed" : c.name);
+  c.class = String(c.class || "");
+  c.ancestry = String(c.ancestry || ""); c.heritage = String(c.heritage || ""); c.background = String(c.background || "");
+  c.level = clamp(Math.round(num(c.level, 1)), 1, 30);
+  c.keyability = ABILITIES.includes(c.keyability) ? c.keyability : "str";
+
+  c.abilities = (c.abilities && typeof c.abilities === "object") ? c.abilities : {};
+  c.mods = (c.mods && typeof c.mods === "object") ? c.mods : {};
+  ABILITIES.forEach((a) => {
+    c.abilities[a] = num(c.abilities[a], 10);
+    c.mods[a] = num(c.mods[a], abilityMod(c.abilities[a]));
+  });
+
+  c.ac = num(c.ac, 0);
+  c.perception = num(c.perception, c.mods.wis);
+  c.perceptionPassive = num(c.perceptionPassive, 10 + c.perception);
+  c.hpMax = Math.max(0, Math.round(num(c.hpMax, 0)));
+  c.speed = num(c.speed, 0);
+  c.classDC = num(c.classDC, 10);
+  c.focusPool = Math.max(0, Math.round(num(c.focusPool, 0)));
+
+  const saves = (c.saves && typeof c.saves === "object") ? c.saves : {};
+  c.saves = {};
+  SAVES.forEach((s) => { c.saves[s.key] = num(saves[s.key], c.mods[s.ability]); });
+
+  const skills = (c.skills && typeof c.skills === "object") ? c.skills : {};
+  c.skills = {};
+  SKILLS.forEach((s) => {
+    const src = (skills[s.key] && typeof skills[s.key] === "object") ? skills[s.key] : {};
+    const mod = num(src.mod, c.mods[s.ability]);
+    c.skills[s.key] = { rank: num(src.rank, 0), mod: mod, passive: num(src.passive, 10 + mod) };
+  });
+
+  c.lores = arr(c.lores).map((l) => {
+    const src = (l && typeof l === "object") ? l : {};
+    const mod = num(src.mod, c.mods.int);
+    return { name: String(src.name || "Lore"), rank: num(src.rank, 0), mod: mod, passive: num(src.passive, 10 + mod) };
+  });
+  c.languages = arr(c.languages).map(String);
+  c.senses = arr(c.senses).map(String);
+  c.spellcasting = arr(c.spellcasting).map((sp) => {
+    const src = (sp && typeof sp === "object") ? sp : {};
+    return {
+      name: String(src.name || "Spells"), tradition: String(src.tradition || ""), type: String(src.type || ""),
+      ability: ABILITIES.includes(src.ability) ? src.ability : "cha",
+      dc: num(src.dc, 10), attack: num(src.attack, 0), focusPoints: Math.max(0, Math.round(num(src.focusPoints, 0))),
+    };
+  });
+  c.pbId = c.pbId == null ? null : String(c.pbId);
+
+  const live = Object.assign(freshLive(c.hpMax), (c.live && typeof c.live === "object") ? c.live : {});
+  live.hpTemp = Math.max(0, Math.round(num(live.hpTemp, 0)));
+  live.heroPoints = clamp(Math.round(num(live.heroPoints, 1)), 0, 3);
+  live.wounded = clamp(Math.round(num(live.wounded, 0)), 0, 3);
+  live.doomed = clamp(Math.round(num(live.doomed, 0)), 0, 3);
+  live.dying = clamp(Math.round(num(live.dying, 0)), 0, Math.max(1, 4 - live.doomed));
+  live.conditions = arr(live.conditions)
+    .filter((x) => x && typeof x === "object" && x.key)
+    .map((x) => ({ key: String(x.key), value: x.value == null ? null : Math.max(1, Math.round(num(x.value, 1))) }))
+    .filter((x, i, all) => all.findIndex((y) => y.key === x.key) === i);
+  c.live = live;
+  c.live.hpCur = clamp(Math.round(num(live.hpCur, effMaxHP(c))), 0, effMaxHP(c));
+  return c;
+}
 function normalizeLib(lib) {
-  lib.characters = lib.characters || {};
-  lib.order = Array.isArray(lib.order) ? lib.order.filter((id) => lib.characters[id]) : [];
+  lib = (lib && typeof lib === "object") ? lib : {};
+  lib.characters = (lib.characters && typeof lib.characters === "object") ? lib.characters : {};
+  const seen = {};
+  lib.order = (Array.isArray(lib.order) ? lib.order : [])
+    .filter((id) => lib.characters[id] && !seen[id] && (seen[id] = true));
   // back-fill order with any characters missing from it
   Object.keys(lib.characters).forEach((id) => { if (!lib.order.includes(id)) lib.order.push(id); });
   Object.keys(lib.characters).forEach((id) => {
-    const c = lib.characters[id];
-    c.id = id;
-    c.live = Object.assign(freshLive(c.hpMax), c.live || {});
-    if (!Array.isArray(c.live.conditions)) c.live.conditions = [];
+    lib.characters[id] = normalizeCharacter(lib.characters[id]);
+    lib.characters[id].id = id;
   });
-  lib.board = Object.assign(defaultBoard(), lib.board || {});
-  lib.board.marchOrder = (lib.board.marchOrder || []).filter((id) => lib.characters[id]);
-  lib.settings = Object.assign(defaultSettings(), lib.settings || {});
+  lib.board = Object.assign(defaultBoard(), (lib.board && typeof lib.board === "object") ? lib.board : {});
+  lib.board.assignments = (lib.board.assignments && typeof lib.board.assignments === "object") ? lib.board.assignments : {};
+  Object.keys(lib.board.assignments).forEach((id) => {
+    if (!lib.characters[id] || !EXPLORATION_BY_KEY[lib.board.assignments[id]]) delete lib.board.assignments[id];
+  });
+  const seenM = {};
+  lib.board.marchOrder = (Array.isArray(lib.board.marchOrder) ? lib.board.marchOrder : [])
+    .filter((id) => lib.characters[id] && !seenM[id] && (seenM[id] = true));
+  lib.settings = Object.assign(defaultSettings(), (lib.settings && typeof lib.settings === "object") ? lib.settings : {});
   if (!lib.characters[lib.activeId]) lib.activeId = null;
   return lib;
 }
@@ -56,7 +136,6 @@ function saveState() {
   try { localStorage.setItem(LS_KEY, JSON.stringify(library)); }
   catch (e) { if (!_storageWarned && typeof toast === "function") { toast("Couldn't save — storage full or disabled"); _storageWarned = true; } }
 }
-function saveSettings() { saveState(); }
 
 /* Ordered list of PCs (respecting library.order). */
 function pcs() { return library.order.map((id) => library.characters[id]).filter(Boolean); }
@@ -66,9 +145,135 @@ function pcById(id) { return library.characters[id] || null; }
    FORMATTING HELPERS
    ============================================================ */
 function sign(n) { n = Number(n) || 0; return (n >= 0 ? "+" : "") + n; }
-function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function textToHtml(s) { return escapeHtml(s).replace(/\n/g, "<br>"); }
 function titleCase(s) { s = String(s || ""); return s ? s.charAt(0).toUpperCase() + s.slice(1) : ""; }
+
+/* ============================================================
+   CONDITION EFFECTS
+   Mirrors the FlatModifier rules in the Foundry pf2e condition data:
+     frightened / sickened  status −value to every check and DC
+     clumsy                 status −value to dex-based (AC, Reflex, Acrobatics/Stealth/Thievery)
+     enfeebled              status −value to str-based
+     stupefied              status −value to int/wis/cha-based (Perception, Will, spell DCs)
+     drained                status −value to con-based, and −level × value maximum HP
+     fatigued               status −1 to AC and saves
+     off-guard / prone / grabbed / restrained
+                            circumstance −2 to AC (the immobilizing conditions and prone
+                            all make you off-guard; same-type penalties never stack)
+     blinded                status −4 to Perception
+     deafened               status −2 to Perception (Foundry scopes this to initiative and
+                            auditory checks; the roller doubles as an initiative roller, so
+                            it is applied and always named in the breakdown)
+     unconscious            status −4 to AC / Perception / Reflex, and off-guard
+   PF2e stacking: of several penalties of the same TYPE only the worst applies;
+   penalties of different types add together.
+   ============================================================ */
+const CONDITION_EFFECTS = {
+  frightened: [{ type: "status", scaled: true, domains: ["all"] }],
+  sickened: [{ type: "status", scaled: true, domains: ["all"] }],
+  clumsy: [{ type: "status", scaled: true, domains: ["dex-based"] }],
+  enfeebled: [{ type: "status", scaled: true, domains: ["str-based"] }],
+  stupefied: [{ type: "status", scaled: true, domains: ["int-based", "wis-based", "cha-based"] }],
+  drained: [{ type: "status", scaled: true, domains: ["con-based"] }],
+  fatigued: [{ type: "status", value: 1, domains: ["ac", "saving-throw"] }],
+  "off-guard": [{ type: "circumstance", value: 2, domains: ["ac"] }],
+  prone: [{ type: "circumstance", value: 2, domains: ["ac"] }],
+  grabbed: [{ type: "circumstance", value: 2, domains: ["ac"] }],
+  restrained: [{ type: "circumstance", value: 2, domains: ["ac"] }],
+  blinded: [{ type: "status", value: 4, domains: ["perception"] }],
+  deafened: [{ type: "status", value: 2, domains: ["perception"] }],
+  unconscious: [
+    { type: "status", value: 4, domains: ["ac", "perception", "reflex"] },
+    { type: "circumstance", value: 2, domains: ["ac"] },
+  ],
+};
+
+/* The modifier "domains" a statistic belongs to (Foundry's selectors). */
+function statDomains(pc, key) {
+  if (key === "ac") return ["all", "ac", "dex-based"];
+  if (key === "perception") return ["all", "perception", "wis-based"];
+  if (key === "classDC") return ["all", (pc && pc.keyability ? pc.keyability : "str") + "-based"];
+  if (key === "lore") return ["all", "skill-check", "int-based"];
+  const sv = SAVES.find((s) => s.key === key);
+  if (sv) return ["all", "saving-throw", sv.key, sv.ability + "-based"];
+  const ability = SKILL_ABILITY[key];
+  if (ability) return ["all", "skill-check", key, ability + "-based"];
+  return ["all"];
+}
+function spellDomains(ability) { return ["all", "spell-dc", (ability || "cha") + "-based"]; }
+
+/* Active conditions, including the ones the dying track implies. */
+function activeConditions(pc) {
+  const live = (pc && pc.live) || {};
+  const out = (live.conditions || []).map((c) => ({ key: c.key, value: Number(c.value) || 0 }));
+  if ((Number(live.dying) || 0) > 0 && !out.some((c) => c.key === "unconscious")) {
+    out.push({ key: "unconscious", value: 0, implied: "dying" });
+  }
+  return out;
+}
+
+/* Worst penalty of each type across the active conditions, per PF2e stacking. */
+function conditionPenalty(pc, domains) {
+  const best = {};
+  activeConditions(pc).forEach((c) => {
+    (CONDITION_EFFECTS[c.key] || []).forEach((eff) => {
+      if (!eff.domains.some((d) => domains.indexOf(d) >= 0)) return;
+      const v = eff.scaled ? Math.max(0, c.value) : eff.value;
+      if (v <= 0) return;
+      if (!best[eff.type] || v > best[eff.type].value) {
+        best[eff.type] = {
+          value: v,
+          label: condLabel(c.key) + (eff.scaled ? " " + c.value : "") + (c.implied ? " (dying)" : ""),
+        };
+      }
+    });
+  });
+  const parts = Object.keys(best).map((t) => ({ type: t, value: best[t].value, label: best[t].label }));
+  return { total: -parts.reduce((n, p) => n + p.value, 0), parts: parts };
+}
+function penMark(delta) { return String(delta).replace("-", "\u2212"); }
+function penaltyNote(parts) { return parts.map((p) => `${p.label} −${p.value} ${p.type}`).join(" · "); }
+
+function baseStat(pc, key) {
+  if (key === "perception") return Number(pc.perception) || 0;
+  if (key === "ac") return Number(pc.ac) || 0;
+  if (key === "classDC") return Number(pc.classDC) || 0;
+  if (pc.saves && key in pc.saves) return Number(pc.saves[key]) || 0;
+  if (pc.skills && pc.skills[key]) return Number(pc.skills[key].mod) || 0;
+  return 0;
+}
+/* A statistic after the active conditions are applied. */
+function effStat(pc, key, domains) {
+  const base = baseStat(pc, key);
+  const pen = conditionPenalty(pc, domains || statDomains(pc, key));
+  return { base: base, delta: pen.total, value: base + pen.total, parts: pen.parts, note: penaltyNote(pen.parts) };
+}
+function effMod(pc, key) { return effStat(pc, key).value; }
+
+/* Drained lowers maximum HP by level × value. */
+function drainedValue(pc) {
+  const c = ((pc.live && pc.live.conditions) || []).find((x) => x.key === "drained");
+  return c ? Math.max(0, Number(c.value) || 0) : 0;
+}
+function effMaxHP(pc) {
+  const max = Number(pc.hpMax) || 0;
+  const d = drainedValue(pc);
+  return d ? Math.max(1, max - d * (Number(pc.level) || 1)) : max;
+}
+/* PF2e: you die at dying 4, or sooner when Doomed. */
+function maxDying(pc) { return Math.max(1, 4 - (Number(pc.live && pc.live.doomed) || 0)); }
+function isDead(pc) { return (Number(pc.live && pc.live.dying) || 0) >= maxDying(pc); }
+
+/* Render a statistic, showing the conditions penalty when there is one. */
+function statHTML(pc, key, opts) {
+  const o = opts || {};
+  const e = effStat(pc, key, o.domains);
+  const shown = o.signed === false ? String(e.value) : sign(e.value);
+  if (!e.delta) return shown;
+  const base = o.signed === false ? String(e.base) : sign(e.base);
+  return `<span class="pen" title="${escapeHtml("Base " + base + " · " + e.note)}">${shown}<span class="penmark">${penMark(e.delta)}</span></span>`;
+}
 
 /* ============================================================
    PATHBUILDER PARSER  (verified against a live L2 export)
@@ -144,7 +349,7 @@ function parsePathbuilder(root) {
     ac: Number(b.acTotal && b.acTotal.acTotal) || 0,
     perception: perception, perceptionPassive: 10 + perception,
     saves: saves, skills: skills, lores: lores,
-    hpMax: hpMax, speed: speed, speeds: {}, languages: (b.languages || []).slice(), senses: senses,
+    hpMax: hpMax, speed: speed, languages: (b.languages || []).slice(), senses: senses,
     classDC: classDC, spellcasting: spellcasting, focusPool: focusPool,
   };
 }
@@ -247,9 +452,63 @@ function applyTheme() {
   if (meta) { const bg = getComputedStyle(root).getPropertyValue("--bg").trim(); if (bg) meta.setAttribute("content", bg); }
 }
 function themeColorValue(token) { return (getComputedStyle(document.documentElement).getPropertyValue(token) || "").trim() || "#000000"; }
-function setThemeMode(m) { library.settings.themeMode = m; saveSettings(); applyTheme(); renderMenu(); }
-function setCustomColor(key, val) { library.settings.custom = library.settings.custom || {}; library.settings.custom[key] = val; saveSettings(); applyTheme(); }
-function resetTheme() { library.settings.custom = null; saveSettings(); applyTheme(); renderMenu(); }
+function setThemeMode(m) { library.settings.themeMode = m; saveState(); applyTheme(); renderMenu(); }
+function setCustomColor(key, val) { library.settings.custom = library.settings.custom || {}; library.settings.custom[key] = val; saveState(); applyTheme(); }
+function resetTheme() { library.settings.custom = null; saveState(); applyTheme(); renderMenu(); }
+
+/* ============================================================
+   EVENT DELEGATION
+   Generated markup carries data-act (plus data-id / data-key / data-val)
+   and is dispatched from one document-level listener, so no value that came
+   from an imported character is ever interpolated into an executable
+   attribute. (The handful of handlers in the static template take no
+   arguments and are left inline.)
+   ============================================================ */
+const CLICK_ACTIONS = {
+  toggleRosterRow: (el) => toggleRosterRow(el.dataset.id),
+  exportPC: (el) => exportPC(el.dataset.id),
+  deletePC: (el) => deletePC(el.dataset.id),
+  setHero: (el) => setHero(el.dataset.id, Number(el.dataset.val)),
+  bumpStage: (el) => bumpStage(el.dataset.id, el.dataset.key, Number(el.dataset.val)),
+  applyHP: (el) => applyHP(el.dataset.id, Number(el.dataset.val)),
+  toggleCondition: (el) => toggleCondition(el.dataset.id, el.dataset.key, el.dataset.valued === "1"),
+  bumpCondition: (el) => bumpCondition(el.dataset.id, el.dataset.key, Number(el.dataset.val)),
+  removeCondition: (el) => removeCondition(el.dataset.id, el.dataset.key),
+  moveMarch: (el) => moveMarch(el.dataset.id, Number(el.dataset.val)),
+  rollForParty: () => rollForParty(),
+  openMenu: () => openMenu(),
+  setThemeMode: (el) => setThemeMode(el.dataset.key),
+  resetTheme: () => resetTheme(),
+  resetStorage: () => resetStorage(),
+};
+const CHANGE_ACTIONS = {
+  setHP: (el) => setHP(el.dataset.id, el.value),
+  setTemp: (el) => setTemp(el.dataset.id, el.value),
+  setActivity: (el) => setActivity(el.dataset.id, el.value),
+};
+const INPUT_ACTIONS = {
+  setCustomColor: (el) => setCustomColor(el.dataset.key, el.value),
+  refSearch: () => renderRefList(),
+};
+function dispatchAction(map, e) {
+  const el = e.target && e.target.closest ? e.target.closest("[data-act]") : null;
+  if (!el) return;
+  const fn = map[el.dataset.act];
+  if (fn) fn(el);
+}
+function setupDelegation() {
+  document.addEventListener("click", (e) => dispatchAction(CLICK_ACTIONS, e));
+  document.addEventListener("change", (e) => dispatchAction(CHANGE_ACTIONS, e));
+  document.addEventListener("input", (e) => dispatchAction(INPUT_ACTIONS, e));
+  // Enter/Space activate the non-button elements that carry an action (table rows).
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const el = e.target && e.target.closest ? e.target.closest('[data-act][role="button"]') : null;
+    if (!el) return;
+    e.preventDefault();
+    dispatchAction(CLICK_ACTIONS, { target: el });
+  });
+}
 
 /* ============================================================
    NAVIGATION
@@ -267,11 +526,37 @@ function go(view) {
   window.scrollTo(0, 0);
   render(view);
 }
+const RENDERERS = { roster: renderRoster, roll: renderRoll, explore: renderExplore, reference: renderReference };
+/* A single unreadable character used to throw here and leave the view blank
+   for good, since the bad record stays in localStorage. Fail into a panel that
+   still offers a backup code and a reset instead. */
 function render(view) {
-  if (view === "roster") renderRoster();
-  else if (view === "roll") renderRoll();
-  else if (view === "explore") renderExplore();
-  else if (view === "reference") renderReference();
+  const fn = RENDERERS[view];
+  if (!fn) return;
+  try { fn(); } catch (e) { renderFailure(view, e); }
+}
+function renderFailure(view, err) {
+  const el = document.getElementById("view-" + view);
+  if (!el) return;
+  el.innerHTML = `<div class="panel failure">
+    <h2>Something in the saved party couldn't be displayed</h2>
+    <p class="meta">${escapeHtml(String((err && err.message) || err))}</p>
+    <p class="meta">Copy the backup code below first if you want to keep the data, then reset.</p>
+    <textarea id="failureIO" rows="3" readonly></textarea>
+    <div class="row tight">
+      <button class="btn secondary sm" data-act="openMenu">Open menu</button>
+      <button class="btn secondary sm" data-act="resetStorage">Reset saved data</button>
+    </div>
+  </div>`;
+  const ta = document.getElementById("failureIO");
+  try { if (ta) ta.value = partyCode(); } catch (e2) { if (ta) ta.value = ""; }
+}
+function resetStorage() {
+  if (!confirm("Delete every character stored in this browser? This can't be undone.")) return;
+  try { localStorage.removeItem(LS_KEY); } catch (e) { /* storage disabled */ }
+  library = normalizeLib({ characters: {}, order: [], activeId: null });
+  renderAll();
+  toast("Saved data reset");
 }
 function currentView() {
   const shown = VIEWS.find((v) => !document.getElementById("view-" + v).classList.contains("hide"));
@@ -298,7 +583,8 @@ function renderHeader() {
 function conditionChipsHTML(pc) {
   const cs = (pc.live.conditions || []);
   const parts = cs.map((c) => `<span class="condchip">${escapeHtml(condLabel(c.key))}${c.value != null ? " " + c.value : ""}</span>`);
-  if (pc.live.dying > 0) parts.unshift(`<span class="condchip crit">Dying ${pc.live.dying}</span>`);
+  if (isDead(pc)) parts.unshift(`<span class="condchip crit">Dead</span>`);
+  else if (pc.live.dying > 0) parts.unshift(`<span class="condchip crit">Dying ${pc.live.dying}/${maxDying(pc)}</span>`);
   if (pc.live.wounded > 0) parts.push(`<span class="condchip">Wounded ${pc.live.wounded}</span>`);
   if (pc.live.doomed > 0) parts.push(`<span class="condchip crit">Doomed ${pc.live.doomed}</span>`);
   return parts.join("");
@@ -310,12 +596,14 @@ function condLabel(key) {
   return g ? g.name : titleCase(key.replace(/-/g, " "));
 }
 function hpBarHTML(pc) {
-  const max = pc.hpMax || 1, cur = Math.max(0, Math.min(pc.live.hpCur, max));
+  const max = effMaxHP(pc) || 1, cur = Math.max(0, Math.min(pc.live.hpCur, max));
   const pct = Math.round((cur / max) * 100);
   const low = pct <= 25, mid = pct <= 50;
   const temp = pc.live.hpTemp > 0 ? `<span class="hptemp">+${pc.live.hpTemp}</span>` : "";
+  const drained = drainedValue(pc)
+    ? `<span class="penmark" title="${escapeHtml(`Drained ${drainedValue(pc)}: maximum HP reduced by level x value`)}">${penMark(effMaxHP(pc) - pc.hpMax)}</span>` : "";
   return `<div class="hpwrap"><div class="hpbar"><div class="hpfill ${low ? "low" : mid ? "mid" : ""}" style="width:${pct}%"></div></div>
-    <div class="hpnum">${cur}/${max}${temp}</div></div>`;
+    <div class="hpnum">${cur}/${max}${drained}${temp}</div></div>`;
 }
 function classLine(pc) {
   const bits = [pc.class || "—", "Lvl " + pc.level];
@@ -328,20 +616,22 @@ function renderRoster() {
     wrap.innerHTML = `<div class="empty">
       <h2>No characters yet</h2>
       <p>Import your players' characters from Pathbuilder to build the party roster.</p>
-      <button class="btn" onclick="openMenu()">${iconSvg("plus")} Import from Pathbuilder</button>
+      <button class="btn" data-act="openMenu">${iconSvg("plus")} Import from Pathbuilder</button>
     </div>`;
     return;
   }
   const rows = list.map((pc) => {
     const open = pc.id === library.activeId;
-    const head = `<tr class="rrow ${open ? "open" : ""}" onclick="toggleRosterRow('${pc.id}')">
+    const head = `<tr class="rrow ${open ? "open" : ""}" data-act="toggleRosterRow" data-id="${escapeHtml(pc.id)}"
+      tabindex="0" role="button" aria-expanded="${open ? "true" : "false"}"
+      aria-label="${escapeHtml(pc.name + " — " + classLine(pc) + ", show detail")}">
       <td class="c-name"><div class="pname">${escapeHtml(pc.name)}</div><div class="pmeta">${escapeHtml(classLine(pc))}</div>
         <div class="rconds">${conditionChipsHTML(pc)}</div></td>
-      <td class="num strong" data-lbl="AC">${pc.ac}</td>
-      <td class="num" data-lbl="Perception">${sign(pc.perception)}<span class="passv">${pc.perceptionPassive}</span></td>
-      <td class="num" data-lbl="Fort">${sign(pc.saves.fortitude)}</td>
-      <td class="num" data-lbl="Ref">${sign(pc.saves.reflex)}</td>
-      <td class="num" data-lbl="Will">${sign(pc.saves.will)}</td>
+      <td class="num strong" data-lbl="AC">${statHTML(pc, "ac", { signed: false })}</td>
+      <td class="num" data-lbl="Perception">${statHTML(pc, "perception")}<span class="passv">${10 + effMod(pc, "perception")}</span></td>
+      <td class="num" data-lbl="Fort">${statHTML(pc, "fortitude")}</td>
+      <td class="num" data-lbl="Ref">${statHTML(pc, "reflex")}</td>
+      <td class="num" data-lbl="Will">${statHTML(pc, "will")}</td>
       <td class="num" data-lbl="Speed">${pc.speed}</td>
       <td class="c-hp" data-lbl="HP">${hpBarHTML(pc)}</td>
       <td class="c-exp">${iconSvg("chevron", open ? "flip" : "")}</td>
@@ -355,32 +645,42 @@ function renderRoster() {
       <th>Fort</th><th>Ref</th><th>Will</th><th>Spd</th><th class="c-hp">HP</th><th class="c-exp"></th>
     </tr></thead>
     <tbody>${rows}</tbody></table>
-    <p class="hint">Perception/skill rows show the modifier and, in grey, the <b>passive DC</b> (10 + mod) you use for secret checks. Click a character for full detail and live tracking.</p>`;
+    <p class="hint">Perception/skill rows show the modifier and, in grey, the <b>passive DC</b> (10 + mod) you use for secret checks.
+    Values already include the penalties from a character's active conditions — a red figure beside a number is that penalty; hover it for the breakdown.
+    Click a character for full detail and live tracking.</p>`;
 }
 function toggleRosterRow(id) {
   library.activeId = (library.activeId === id) ? null : id;
-  saveState(); renderRoster();
+  saveState(); render("roster");
 }
 
 function rosterDetailHTML(pc) {
   // skills grid
   const skillCells = SKILLS.map((s) => {
-    const sk = pc.skills[s.key];
     return `<div class="skcell"><span class="skname">${s.label}</span>
-      <span class="skmod">${sign(sk.mod)}</span><span class="skpsv">${sk.passive}</span></div>`;
+      <span class="skmod">${statHTML(pc, s.key)}</span><span class="skpsv">${10 + effMod(pc, s.key)}</span></div>`;
   }).join("");
-  const loreCells = pc.lores.length ? pc.lores.map((l) =>
-    `<div class="skcell lore"><span class="skname">${escapeHtml(l.name)} Lore</span>
-      <span class="skmod">${sign(l.mod)}</span><span class="skpsv">${l.passive}</span></div>`).join("") : "";
+  const lorePen = conditionPenalty(pc, statDomains(pc, "lore"));
+  const loreCells = pc.lores.length ? pc.lores.map((l) => {
+    const mod = l.mod + lorePen.total;
+    const shown = lorePen.total
+      ? `<span class="pen" title="${escapeHtml("Base " + sign(l.mod) + " · " + penaltyNote(lorePen.parts))}">${sign(mod)}<span class="penmark">${penMark(lorePen.total)}</span></span>`
+      : sign(mod);
+    return `<div class="skcell lore"><span class="skname">${escapeHtml(l.name)} Lore</span>
+      <span class="skmod">${shown}</span><span class="skpsv">${10 + mod}</span></div>`;
+  }).join("") : "";
   const abils = ABILITIES.map((a) => `<div class="abcell"><span class="ablbl">${ABILITY_LABEL[a]}</span><span class="abmod">${sign(pc.mods[a])}</span></div>`).join("");
   const facts = [];
   if (pc.ancestry) facts.push(`<b>Ancestry</b> ${escapeHtml([pc.heritage, pc.ancestry].filter(Boolean).join(" "))}`);
   if (pc.background) facts.push(`<b>Background</b> ${escapeHtml(pc.background)}`);
-  facts.push(`<b>Class DC</b> ${pc.classDC}`);
+  facts.push(`<b>Class DC</b> ${statHTML(pc, "classDC", { signed: false })}`);
   if (pc.senses.length) facts.push(`<b>Senses</b> ${escapeHtml(pc.senses.join(", "))}`);
   if (pc.languages.length) facts.push(`<b>Languages</b> ${escapeHtml(pc.languages.join(", "))}`);
-  const casters = pc.spellcasting.map((c) =>
-    `<span class="castchip">${escapeHtml(c.name)}: DC ${c.dc} · atk ${sign(c.attack)}</span>`).join("");
+  const casters = pc.spellcasting.map((c) => {
+    const pen = conditionPenalty(pc, spellDomains(c.ability));
+    const mark = pen.total ? `<span class="penmark" title="${escapeHtml(penaltyNote(pen.parts))}">${penMark(pen.total)}</span>` : "";
+    return `<span class="castchip">${escapeHtml(c.name)}: DC ${c.dc + pen.total} · atk ${sign(c.attack + pen.total)}${mark}</span>`;
+  }).join("");
   const focus = pc.focusPool > 0 ? `<span class="castchip">Focus points: ${pc.focusPool}</span>` : "";
 
   return `<div class="detail">
@@ -402,45 +702,53 @@ function rosterDetailHTML(pc) {
       ${liveTrackingHTML(pc)}
     </div>
     <div class="dactions">
-      <button class="btn secondary sm" onclick="exportPC('${pc.id}')">Export character code</button>
+      <button class="btn secondary sm" data-act="exportPC" data-id="${escapeHtml(pc.id)}">Export character code</button>
     </div>
   </div>`;
 }
 
 /* ---- Live tracking controls ---- */
 function liveTrackingHTML(pc) {
-  const hero = [0, 1, 2, 3].map((i) => `<button class="pip ${i < pc.live.heroPoints ? "full" : ""}" title="${i + 1} hero point${i ? "s" : ""}" onclick="setHero('${pc.id}',${i + 1})"></button>`).join("");
-  const stepper = (label, val, key, max) => `<div class="stepper"><span class="stlbl">${label}</span>
-    <button class="stbtn" onclick="bumpStage('${pc.id}','${key}',-1)">−</button>
-    <span class="stval ${val > 0 ? "on" : ""}">${val}</span>
-    <button class="stbtn" onclick="bumpStage('${pc.id}','${key}',1)">+</button></div>`;
+  const id = escapeHtml(pc.id);
+  const max = effMaxHP(pc);
+  const hero = [0, 1, 2, 3].map((i) => `<button class="pip ${i < pc.live.heroPoints ? "full" : ""}" title="${i + 1} hero point${i ? "s" : ""}"
+    aria-label="Set ${i + 1} hero point${i ? "s" : ""}" data-act="setHero" data-id="${id}" data-val="${i + 1}"></button>`).join("");
+  const stepper = (label, val, key, suffix) => `<div class="stepper"><span class="stlbl">${label}</span>
+    <button class="stbtn" aria-label="Decrease ${label}" data-act="bumpStage" data-id="${id}" data-key="${key}" data-val="-1">−</button>
+    <span class="stval ${val > 0 ? "on" : ""}">${val}${suffix || ""}</span>
+    <button class="stbtn" aria-label="Increase ${label}" data-act="bumpStage" data-id="${id}" data-key="${key}" data-val="1">+</button></div>`;
   const quick = QUICK_CONDITIONS.map((c) => {
     const on = pc.live.conditions.find((x) => x.key === c.key);
-    return `<button class="condbtn ${on ? "on" : ""}" onclick="toggleCondition('${pc.id}','${c.key}',${c.valued})">${c.label}${on && on.value != null ? " " + on.value : ""}</button>`;
+    return `<button class="condbtn ${on ? "on" : ""}" aria-pressed="${on ? "true" : "false"}"
+      data-act="toggleCondition" data-id="${id}" data-key="${escapeHtml(c.key)}" data-valued="${c.valued ? "1" : "0"}">${c.label}${on && on.value != null ? " " + on.value : ""}</button>`;
   }).join("");
   const active = pc.live.conditions.map((c) => {
     const cfg = QUICK_CONDITIONS.find((q) => q.key === c.key);
     const valued = cfg ? cfg.valued : (c.value != null);
-    const val = valued ? `<button class="stbtn" onclick="bumpCondition('${pc.id}','${c.key}',-1)">−</button><span class="stval on">${c.value}</span><button class="stbtn" onclick="bumpCondition('${pc.id}','${c.key}',1)">+</button>` : "";
-    return `<span class="activecond">${escapeHtml(condLabel(c.key))} ${val}<button class="condx" onclick="removeCondition('${pc.id}','${c.key}')">${iconSvg("x")}</button></span>`;
+    const key = escapeHtml(c.key), label = condLabel(c.key);
+    const val = valued ? `<button class="stbtn" aria-label="Decrease ${escapeHtml(label)}" data-act="bumpCondition" data-id="${id}" data-key="${key}" data-val="-1">−</button><span class="stval on">${Number(c.value) || 0}</span><button class="stbtn" aria-label="Increase ${escapeHtml(label)}" data-act="bumpCondition" data-id="${id}" data-key="${key}" data-val="1">+</button>` : "";
+    return `<span class="activecond">${escapeHtml(label)} ${val}<button class="condx" aria-label="Remove ${escapeHtml(label)}" data-act="removeCondition" data-id="${id}" data-key="${key}">${iconSvg("x")}</button></span>`;
   }).join("");
+  const dead = isDead(pc) ? `<div class="deadnote">Dying ${pc.live.dying} of ${maxDying(pc)} — this character is dead.</div>` : "";
 
   return `<div class="livewrap">
+    ${dead}
     <div class="liverow">
       <div class="hpctl">
         <span class="stlbl">HP</span>
-        <input type="number" class="hpin" id="hpin-${pc.id}" value="${pc.live.hpCur}" min="0" max="${pc.hpMax}" onchange="setHP('${pc.id}',this.value)"> / ${pc.hpMax}
-        <input type="number" class="amtin" id="amt-${pc.id}" placeholder="#" min="0">
-        <button class="stbtn harm" onclick="applyHP('${pc.id}',-1)">Damage</button>
-        <button class="stbtn heal" onclick="applyHP('${pc.id}',1)">Heal</button>
+        <input type="number" class="hpin" id="hpin-${id}" value="${pc.live.hpCur}" min="0" max="${max}" aria-label="Current HP"
+          data-act="setHP" data-id="${id}"> / ${max}
+        <input type="number" class="amtin" id="amt-${id}" placeholder="#" min="0" aria-label="Damage or healing amount">
+        <button class="stbtn harm" data-act="applyHP" data-id="${id}" data-val="-1">Damage</button>
+        <button class="stbtn heal" data-act="applyHP" data-id="${id}" data-val="1">Heal</button>
         <span class="stlbl">Temp</span>
-        <input type="number" class="hpin" value="${pc.live.hpTemp}" min="0" onchange="setTemp('${pc.id}',this.value)">
+        <input type="number" class="hpin" value="${pc.live.hpTemp}" min="0" aria-label="Temporary HP" data-act="setTemp" data-id="${id}">
       </div>
       <div class="heroctl"><span class="stlbl">Hero</span>${hero}</div>
     </div>
     <div class="liverow">
       ${stepper("Wounded", pc.live.wounded, "wounded")}
-      ${stepper("Dying", pc.live.dying, "dying")}
+      ${stepper("Dying", pc.live.dying, "dying", " / " + maxDying(pc))}
       ${stepper("Doomed", pc.live.doomed, "doomed")}
     </div>
     ${active ? `<div class="activeconds">${active}</div>` : ""}
@@ -448,30 +756,58 @@ function liveTrackingHTML(pc) {
   </div>`;
 }
 
-function withPC(id, fn) { const pc = pcById(id); if (!pc) return; fn(pc); saveState(); renderRoster(); }
-function setHP(id, v) { withPC(id, (pc) => { pc.live.hpCur = clamp(Math.round(Number(v) || 0), 0, pc.hpMax); }); }
+function withPC(id, fn) { const pc = pcById(id); if (!pc) return; fn(pc); saveState(); render("roster"); }
+/* PF2e death and dying: dropping to 0 HP makes you dying 1 + your wounded value;
+   regaining any HP while dying clears dying and adds 1 to wounded. Applied to a
+   PC whose HP just changed, given what it was before. */
+function syncDying(pc, before) {
+  const live = pc.live;
+  if (before > 0 && live.hpCur === 0 && live.dying === 0) {
+    live.dying = clamp(1 + (Number(live.wounded) || 0), 1, maxDying(pc));
+  } else if (before === 0 && live.hpCur > 0 && live.dying > 0) {
+    live.dying = 0;
+    live.wounded = clamp((Number(live.wounded) || 0) + 1, 0, 3);
+  }
+}
+function setHP(id, v) {
+  withPC(id, (pc) => {
+    const before = pc.live.hpCur;
+    pc.live.hpCur = clamp(Math.round(Number(v) || 0), 0, effMaxHP(pc));
+    syncDying(pc, before);
+  });
+}
 function setTemp(id, v) { withPC(id, (pc) => { pc.live.hpTemp = Math.max(0, Math.round(Number(v) || 0)); }); }
 function applyHP(id, dir) {
   const amtEl = document.getElementById("amt-" + id);
   let amt = Math.abs(Math.round(Number(amtEl && amtEl.value) || 0));
   if (!amt) amt = 1;
   withPC(id, (pc) => {
+    const before = pc.live.hpCur;
     if (dir < 0) {
       let dmg = amt;
       if (pc.live.hpTemp > 0) { const absorbed = Math.min(pc.live.hpTemp, dmg); pc.live.hpTemp -= absorbed; dmg -= absorbed; }
-      pc.live.hpCur = clamp(pc.live.hpCur - dmg, 0, pc.hpMax);
+      pc.live.hpCur = clamp(pc.live.hpCur - dmg, 0, effMaxHP(pc));
     } else {
-      pc.live.hpCur = clamp(pc.live.hpCur + amt, 0, pc.hpMax);
+      pc.live.hpCur = clamp(pc.live.hpCur + amt, 0, effMaxHP(pc));
     }
+    syncDying(pc, before);
   });
 }
 function setHero(id, n) { withPC(id, (pc) => { pc.live.heroPoints = (pc.live.heroPoints === n) ? n - 1 : n; if (pc.live.heroPoints < 0) pc.live.heroPoints = 0; }); }
-function bumpStage(id, key, delta) { const caps = { wounded: 3, dying: 4, doomed: 3 }; withPC(id, (pc) => { pc.live[key] = clamp((pc.live[key] || 0) + delta, 0, caps[key] || 9); }); }
+function bumpStage(id, key, delta) {
+  withPC(id, (pc) => {
+    const caps = { wounded: 3, dying: maxDying(pc), doomed: 3 };
+    pc.live[key] = clamp((pc.live[key] || 0) + delta, 0, caps[key] || 9);
+    // raising Doomed lowers the threshold you die at, so re-clamp Dying too
+    pc.live.dying = clamp(pc.live.dying, 0, maxDying(pc));
+  });
+}
 function toggleCondition(id, key, valued) {
   withPC(id, (pc) => {
     const i = pc.live.conditions.findIndex((c) => c.key === key);
     if (i >= 0) pc.live.conditions.splice(i, 1);
     else pc.live.conditions.push({ key: key, value: valued ? 1 : null });
+    pc.live.hpCur = clamp(pc.live.hpCur, 0, effMaxHP(pc));   // Drained lowers maximum HP
   });
 }
 function bumpCondition(id, key, delta) {
@@ -479,6 +815,7 @@ function bumpCondition(id, key, delta) {
     const c = pc.live.conditions.find((x) => x.key === key); if (!c) return;
     c.value = (Number(c.value) || 0) + delta;
     if (c.value < 1) pc.live.conditions = pc.live.conditions.filter((x) => x.key !== key);
+    pc.live.hpCur = clamp(pc.live.hpCur, 0, effMaxHP(pc));   // Drained lowers maximum HP
   });
 }
 function removeCondition(id, key) { withPC(id, (pc) => { pc.live.conditions = pc.live.conditions.filter((x) => x.key !== key); }); }
@@ -503,9 +840,9 @@ function renderRoll() {
         <select id="rollStat">${rollOptions()}</select></label>
       <label class="field inline dc"><span class="name">DC <span class="hint">optional</span></span>
         <input type="number" id="rollDC" placeholder="—" min="1"></label>
-      <button class="btn sm" onclick="rollForParty()">${iconSvg("roll")} Roll for party</button>
+      <button class="btn sm" data-act="rollForParty">${iconSvg("roll")} Roll for party</button>
     </div>
-    <p class="hint">Rolls a secret <b>d20 + modifier</b> for every character at once — Perception doubles as initiative. Set a DC to colour the degrees of success (natural 20 / 1 shift one step, per PF2e).</p>
+    <p class="hint">Rolls a secret <b>d20 + modifier</b> for every character at once — Perception doubles as initiative. Set a DC to colour the degrees of success (natural 20 / 1 shift one step, per PF2e). Modifiers include the penalties from each character's active conditions.</p>
     <div id="rollResults"></div>
   </div>`;
   if (_lastRoll) { document.getElementById("rollStat").value = _lastRoll.stat; if (_lastRoll.dc != null) document.getElementById("rollDC").value = _lastRoll.dc; renderRollResults(); }
@@ -519,12 +856,7 @@ function degreeOf(total, natural, dc) {
   return d;
 }
 const DEGREE = [{ t: "Crit Fail", c: "cfail" }, { t: "Failure", c: "fail" }, { t: "Success", c: "succ" }, { t: "Crit Success", c: "csucc" }];
-function pcStatMod(pc, key) {
-  if (key === "perception") return pc.perception;
-  if (pc.saves && key in pc.saves) return pc.saves[key];
-  if (pc.skills && pc.skills[key]) return pc.skills[key].mod;
-  return 0;
-}
+function pcStatMod(pc, key) { return effMod(pc, key); }
 function statLabel(key) {
   if (key === "perception") return "Perception";
   const sv = SAVES.find((s) => s.key === key); if (sv) return sv.full;
@@ -536,8 +868,8 @@ function rollForParty() {
   const dcRaw = document.getElementById("rollDC").value;
   const dc = dcRaw === "" ? null : Number(dcRaw);
   const rolls = pcs().map((pc) => {
-    const nat = d20(), mod = pcStatMod(pc, stat), total = nat + mod;
-    return { id: pc.id, name: pc.name, nat: nat, mod: mod, total: total, degree: degreeOf(total, nat, dc) };
+    const e = effStat(pc, stat), nat = d20(), total = nat + e.value;
+    return { id: pc.id, name: pc.name, nat: nat, mod: e.value, note: e.note, total: total, degree: degreeOf(total, nat, dc) };
   }).sort((a, b) => b.total - a.total || b.nat - a.nat);
   _lastRoll = { stat: stat, dc: dc, rolls: rolls };
   renderRollResults();
@@ -549,13 +881,14 @@ function renderRollResults() {
   const rows = rolls.map((r) => {
     const deg = r.degree != null ? `<span class="deg ${DEGREE[r.degree].c}">${DEGREE[r.degree].t}</span>` : "";
     const natTag = r.nat === 20 ? `<span class="nat nat20">20</span>` : r.nat === 1 ? `<span class="nat nat1">1</span>` : `<span class="natp">${r.nat}</span>`;
+    const note = r.note ? `<span class="rnote" title="${escapeHtml(r.note)}">${escapeHtml(r.note)}</span>` : "";
     return `<div class="rollrow ${r.degree != null ? DEGREE[r.degree].c : ""}">
-      <span class="rname">${escapeHtml(r.name)}</span>
+      <span class="rname">${escapeHtml(r.name)}${note}</span>
       <span class="rmath">${natTag} ${sign(r.mod)}</span>
       <span class="rtotal">${r.total}</span>${deg}</div>`;
   }).join("");
   box.innerHTML = head + `<div class="rolllist">${rows}</div>
-    <button class="btn secondary sm" onclick="rollForParty()">Roll again</button>`;
+    <button class="btn secondary sm" data-act="rollForParty">Roll again</button>`;
 }
 
 /* ============================================================
@@ -578,12 +911,13 @@ function renderExplore() {
       : (cfg.governing === "varies" ? "varies" : "no roll")) : "";
     const options = `<option value="">— none —</option>` + EXPLORATION_ACTIVITIES.map((a) =>
       `<option value="${a.key}" ${a.key === act ? "selected" : ""}>${a.label}</option>`).join("");
+    const id = escapeHtml(pc.id);
     return `<div class="exprow">
-      <div class="expord"><button class="ordbtn" onclick="moveMarch('${pc.id}',-1)" title="Up">${iconSvg("up")}</button>
+      <div class="expord"><button class="ordbtn" data-act="moveMarch" data-id="${id}" data-val="-1" title="Move up" aria-label="Move ${escapeHtml(pc.name)} up">${iconSvg("up")}</button>
         <span class="ordnum">${i + 1}</span>
-        <button class="ordbtn" onclick="moveMarch('${pc.id}',1)" title="Down">${iconSvg("down")}</button></div>
+        <button class="ordbtn" data-act="moveMarch" data-id="${id}" data-val="1" title="Move down" aria-label="Move ${escapeHtml(pc.name)} down">${iconSvg("down")}</button></div>
       <div class="expname"><div class="pname">${escapeHtml(pc.name)}</div><div class="pmeta">${escapeHtml(classLine(pc))}</div></div>
-      <div class="expsel"><select onchange="setActivity('${pc.id}',this.value)">${options}</select></div>
+      <div class="expsel"><select data-act="setActivity" data-id="${id}" aria-label="Exploration activity for ${escapeHtml(pc.name)}">${options}</select></div>
       <div class="expgov">${govText ? `<span class="govmod">${govText}</span>` : ""}</div>
       <div class="expnote">${cfg ? escapeHtml(cfg.short) : ""}</div>
     </div>`;
@@ -598,17 +932,20 @@ function renderExplore() {
 }
 function governingMod(pc, cfg) {
   if (!cfg) return null;
-  if (cfg.governing === "perception") return pc.perception;
-  if (pc.skills && pc.skills[cfg.governing]) return pc.skills[cfg.governing].mod;
+  if (cfg.governing === "perception") return effMod(pc, "perception");
+  if (pc.skills && pc.skills[cfg.governing]) return effMod(pc, cfg.governing);
   return null;
 }
-function setActivity(id, key) { library.board.assignments[id] = key; saveState(); renderExplore(); }
+function setActivity(id, key) {
+  if (key) library.board.assignments[id] = key; else delete library.board.assignments[id];
+  saveState(); render("explore");
+}
 function moveMarch(id, delta) {
   const order = exploreOrder().map((p) => p.id);
   const i = order.indexOf(id), j = i + delta;
   if (i < 0 || j < 0 || j >= order.length) return;
   order.splice(j, 0, order.splice(i, 1)[0]);
-  library.board.marchOrder = order; saveState(); renderExplore();
+  library.board.marchOrder = order; saveState(); render("explore");
 }
 
 /* ============================================================
@@ -624,7 +961,7 @@ function refItems() {
 function renderReference() {
   const wrap = document.getElementById("view-reference");
   wrap.innerHTML = `<div class="panel">
-    <div class="searchbar">${iconSvg("search")}<input type="text" id="refSearch" placeholder="Search conditions & actions…" oninput="renderRefList()"></div>
+    <div class="searchbar">${iconSvg("search")}<input type="text" id="refSearch" placeholder="Search conditions & actions…" aria-label="Search conditions and actions" data-act="refSearch"></div>
     <div id="refList"></div>
     <p class="hint">${REF_META.generated ? `Condition & action text from the Foundry pf2e data (${escapeHtml(String(REF_META.sourceCommit || ""))}). Paizo content, OGL/ORC.` : `Showing built-in summaries. Run <b>npm run build:ref</b> to bundle the full Foundry-derived rules text.`}</p>
   </div>`;
@@ -653,7 +990,7 @@ function renderMenu() {
   const list = pcs();
   const chars = list.length ? list.map((pc) => `<div class="charcard">
     <div class="txt"><div class="nm">${escapeHtml(pc.name)}</div><div class="tl">${escapeHtml(classLine(pc))}${pc.pbId ? ` · <span class="hint">PB ${escapeHtml(String(pc.pbId))}</span>` : ""}</div></div>
-    <button class="rmrow" title="Remove" onclick="deletePC('${pc.id}')">${iconSvg("x")}</button>
+    <button class="rmrow" title="Remove" aria-label="Remove ${escapeHtml(pc.name)}" data-act="deletePC" data-id="${escapeHtml(pc.id)}">${iconSvg("x")}</button>
   </div>`).join("") : `<p class="meta">No characters yet.</p>`;
 
   document.getElementById("menuList").innerHTML = chars;
@@ -665,12 +1002,12 @@ function renderMenu() {
 function renderAppearance() {
   const box = document.getElementById("appearancePanel"); if (!box) return;
   const mode = (library.settings && library.settings.themeMode) || "auto";
-  const seg = ["light", "dark", "auto"].map((m) => `<button class="${mode === m ? "on" : ""}" onclick="setThemeMode('${m}')">${titleCase(m)}</button>`).join("");
+  const seg = ["light", "dark", "auto"].map((m) => `<button class="${mode === m ? "on" : ""}" aria-pressed="${mode === m ? "true" : "false"}" data-act="setThemeMode" data-key="${m}">${titleCase(m)}</button>`).join("");
   const rows = [["Background", "bg", "--bg"], ["Surface", "surface", "--surface"], ["Text", "ink", "--ink"], ["Accent", "accent", "--accent"]]
     .map(([label, key, token]) => `<div class="swatchrow"><label>${label}</label>
-      <input type="color" value="${themeColorValue(token)}" oninput="setCustomColor('${key}',this.value)" aria-label="${label} colour"></div>`).join("");
+      <input type="color" value="${themeColorValue(token)}" data-act="setCustomColor" data-key="${key}" aria-label="${label} colour"></div>`).join("");
   box.innerHTML = `<div class="seg">${seg}</div>${rows}
-    <button class="btn secondary sm" onclick="resetTheme()">Reset colours</button>`;
+    <button class="btn secondary sm" data-act="resetTheme">Reset colours</button>`;
 }
 function deletePC(id) {
   if (!confirm("Remove this character from the party?")) return;
@@ -692,39 +1029,97 @@ function exportPC(id) {
   copyToClipboard(code, "Character code copied");
   const ta = document.getElementById("backupIO"); if (ta) ta.value = code;
 }
+/* The exploration board is keyed by character id, so the ids travel with the
+   party and are remapped on import — otherwise the marching order and every
+   activity assignment would arrive pointing at characters that no longer exist. */
+function partyCode() {
+  const payload = {
+    characters: library.order.map((id) => Object.assign({}, library.characters[id])),
+    board: library.board,
+  };
+  return "PF2EPARTY1:" + b64encode(JSON.stringify(payload));
+}
 function exportParty() {
-  const payload = { characters: library.order.map((id) => { const c = Object.assign({}, library.characters[id]); delete c.id; return c; }), board: library.board };
-  const code = "PF2EPARTY1:" + b64encode(JSON.stringify(payload));
+  const code = partyCode();
   const ta = document.getElementById("backupIO"); if (ta) { ta.value = code; ta.focus(); ta.select(); }
   copyToClipboard(code, "Party code copied");
 }
+
+/* Take a character out of a backup code into the library, matching an existing
+   PC by Pathbuilder id or name the same way an import does, so re-importing a
+   code updates the party instead of duplicating it. */
+function adoptCharacter(raw) {
+  const incoming = normalizeCharacter(Object.assign({}, raw));
+  const hadLive = !!(raw && raw.live);
+  const nameKey = incoming.name.toLowerCase();
+  let existing = null;
+  if (incoming.pbId) existing = pcs().find((p) => p.pbId && String(p.pbId) === String(incoming.pbId)) || null;
+  if (!existing) existing = pcs().find((p) => p.name.toLowerCase() === nameKey) || null;
+
+  if (existing) {
+    const keepLive = hadLive ? incoming.live : existing.live;
+    const id = existing.id;
+    Object.assign(existing, incoming);
+    existing.id = id;
+    existing.live = keepLive;
+    existing.live.hpCur = clamp(existing.live.hpCur, 0, effMaxHP(existing));
+    return { pc: existing, updated: true };
+  }
+  incoming.id = uid();
+  if (!hadLive) incoming.live = freshLive(incoming.hpMax);
+  library.characters[incoming.id] = incoming;
+  library.order.push(incoming.id);
+  return { pc: incoming, updated: false };
+}
+/* Fold an imported board in, translating the exporting device's ids. */
+function mergeBoard(board, idMap) {
+  if (!board || typeof board !== "object") return;
+  const remap = (id) => idMap[id] || (library.characters[id] ? id : null);
+  Object.keys(board.assignments || {}).forEach((oldId) => {
+    const id = remap(oldId), act = board.assignments[oldId];
+    if (id && EXPLORATION_BY_KEY[act]) library.board.assignments[id] = act;
+  });
+  const order = (board.marchOrder || []).map(remap).filter(Boolean);
+  library.board.marchOrder = order.concat(library.board.marchOrder.filter((id) => order.indexOf(id) < 0));
+}
 function importBackup() {
-  let code = (document.getElementById("backupIO").value || "").trim();
+  const ta = document.getElementById("backupIO");
+  const code = ((ta && ta.value) || "").trim();
   if (!code) { toast("Paste a code first"); return; }
   try {
     if (code.startsWith("PF2EPARTY1:")) {
       const payload = JSON.parse(b64decode(code.slice("PF2EPARTY1:".length)));
-      (payload.characters || []).forEach((c) => {
-        const id = uid(); c.id = id; c.live = c.live || freshLive(c.hpMax);
-        library.characters[id] = c; library.order.push(id);
+      const chars = Array.isArray(payload.characters) ? payload.characters : [];
+      const idMap = {};
+      let added = 0, updated = 0;
+      chars.forEach((c) => {
+        const oldId = c && c.id ? String(c.id) : null;
+        const r = adoptCharacter(c);
+        if (oldId) idMap[oldId] = r.pc.id;
+        if (r.updated) updated++; else added++;
       });
-      if (payload.board) library.board = Object.assign(defaultBoard(), payload.board);
-      saveState(); toast(`Imported ${(payload.characters || []).length} characters`); renderAll();
+      mergeBoard(payload.board, idMap);
+      library = normalizeLib(library);
+      saveState();
+      toast(`Imported ${added} character${added === 1 ? "" : "s"}${updated ? `, updated ${updated}` : ""}`);
     } else if (code.startsWith("PF2EP1:")) {
-      const c = JSON.parse(b64decode(code.slice("PF2EP1:".length)));
-      const id = uid(); c.id = id; c.live = freshLive(c.hpMax);
-      library.characters[id] = c; library.order.push(id);
-      saveState(); toast(`Imported ${c.name || "character"}`); renderAll();
-    } else { throw new Error("bad"); }
-    document.getElementById("backupIO").value = "";
-  } catch (e) { alert("That code didn't work — make sure you pasted the whole thing."); }
+      const r = adoptCharacter(JSON.parse(b64decode(code.slice("PF2EP1:".length))));
+      library = normalizeLib(library);
+      saveState();
+      toast(`${r.updated ? "Updated" : "Imported"} ${r.pc.name}`);
+    } else { throw new Error("unrecognised code"); }
+    if (ta) ta.value = "";
+    renderAll();
+  } catch (e) {
+    toast("That code didn't work — paste the whole thing");
+  }
 }
 function copyToClipboard(text, okMsg) {
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => toast(okMsg)).catch(() => toast("Copied to the box below"));
   else toast("Copied to the box below");
 }
 
-function emptyHint(msg) { return `<div class="empty"><p>${escapeHtml(msg)}</p><button class="btn" onclick="openMenu()">${iconSvg("plus")} Import from Pathbuilder</button></div>`; }
+function emptyHint(msg) { return `<div class="empty"><p>${escapeHtml(msg)}</p><button class="btn" data-act="openMenu">${iconSvg("plus")} Import from Pathbuilder</button></div>`; }
 
 /* ============================================================
    PWA / OFFLINE
@@ -756,6 +1151,7 @@ function downloadOffline() {
    ============================================================ */
 function boot() {
   applyTheme();
+  setupDelegation();
   renderHeader();
   go("roster");
   setupInstall();

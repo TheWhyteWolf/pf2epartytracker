@@ -37,8 +37,8 @@ self.addEventListener("fetch", (e) => {
     e.respondWith(
       fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put("./index.html", copy));
+          // only cache a real page — a 404/500 would otherwise become the offline shell
+          if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put("./index.html", copy)); }
           return res;
         })
         .catch(() => caches.match("./index.html").then((r) => r || caches.match("./")))

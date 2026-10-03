@@ -104,6 +104,9 @@ input,select,textarea{
   background:var(--surface-2);color:var(--ink);border:1px solid var(--line);appearance:none;-webkit-appearance:none;accent-color:var(--accent);
 }
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);}
+/* Every interactive element needs a visible keyboard focus ring. */
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px;}
+input:focus-visible,select:focus-visible,textarea:focus-visible{outline-offset:1px;}
 select{background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
   background-position:calc(100% - 20px) center,calc(100% - 14px) center;background-size:6px 6px,6px 6px;background-repeat:no-repeat;padding-right:38px;}
 textarea{resize:vertical;line-height:1.4;}
@@ -132,6 +135,7 @@ table.roster{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nu
 .roster td.c-name{text-align:left;padding-left:14px;max-width:280px;}
 .roster td.c-exp{width:34px;color:var(--muted);}
 .rrow{cursor:pointer;}
+.rrow:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
 .rrow:hover{background:var(--accent-soft);}
 .rrow.open{background:var(--accent-soft);}
 .pname{font-weight:700;font-size:1rem;}
@@ -147,6 +151,14 @@ table.roster{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nu
 .hpfill.low{background:var(--harm);}
 .hpnum{font-size:.8rem;font-weight:700;}
 .hptemp{color:var(--info);margin-left:3px;}
+
+/* ---- Condition penalties applied to a statistic ---- */
+.pen{cursor:help;border-bottom:1px dotted var(--harm);}
+.penmark{color:var(--harm);font-size:.72rem;font-weight:700;margin-left:3px;vertical-align:.08em;}
+.deadnote{background:color-mix(in srgb,var(--harm) 16%,var(--surface));border:1px solid color-mix(in srgb,var(--harm) 45%,var(--line));
+  color:var(--harm);font-weight:700;border-radius:9px;padding:7px 11px;margin-bottom:10px;font-size:.85rem;}
+.panel.failure h2{color:var(--harm);}
+.rnote{display:block;font-size:.7rem;color:var(--harm);font-weight:600;margin-top:1px;}
 
 /* ---- Expanded detail ---- */
 .rdetail td{padding:0;background:var(--surface-2);}
@@ -295,4 +307,13 @@ details.ref summary::-webkit-details-marker{display:none;}
   .exprow{grid-template-columns:1fr;gap:6px;}
   .rollbar{flex-direction:column;align-items:stretch;}
   .rollbar .field.inline select,.rollbar .field.inline.dc input{width:100%;}
+}
+
+/* ============================================================
+   MOTION — honour the reader's reduced-motion preference
+   ============================================================ */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;
+    transition-duration:.01ms !important;scroll-behavior:auto !important;}
+  .btn:active{transform:none;}
 }

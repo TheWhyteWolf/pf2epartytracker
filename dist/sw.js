@@ -2,7 +2,7 @@
    Network-first for the app page (fresh when online, cached when offline),
    cache-first for static assets. Cache version is stamped at build time so a
    redeploy refreshes clients automatically. */
-const CACHE = "pf2e-party-tracker-20260914005107";
+const CACHE = "pf2e-party-tracker-6faf5fc0d2f6";
 /* Every cache this app has ever made starts with PREFIX. The sweep below is
    scoped to it on purpose: the three PF2e tools share an origin when they are
    served from one host (GitHub Pages does it, and so does the toolbox), and an
@@ -37,8 +37,8 @@ self.addEventListener("fetch", (e) => {
     e.respondWith(
       fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put("./index.html", copy));
+          // only cache a real page — a 404/500 would otherwise become the offline shell
+          if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put("./index.html", copy)); }
           return res;
         })
         .catch(() => caches.match("./index.html").then((r) => r || caches.match("./")))

@@ -39,7 +39,8 @@
     "build": "python3 tools/build.py",
     "build:ref": "python3 tools/build_reference.py --src \"$PF2E_DATA/packs/pf2e\" --out data/reference.generated.js",
     "test": "node tools/test.mjs",
-    "check": "npm run build && npm test"
+    "check": "npm run build && npm test",
+    "prepublishOnly": "npm run check"
   },
   "devDependencies": {
     "jsdom": "^24.0.0"
